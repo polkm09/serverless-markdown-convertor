@@ -2,6 +2,7 @@ export default {
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
 		const authCookie = request.headers.get('Cookie')?.match(/auth=([^;]+)/)?.[1];
+		const apiKey = request.headers.get('X-Api-Key');
 		
 		// 处理静态文件请求
 		if (request.method === 'GET') {
@@ -44,7 +45,68 @@ export default {
 			});
 		}
 
-		// 处理文件转换请求
+		// 处理API文件转换请求 - 返回纯文本Markdown
+		if (request.method === 'POST' && url.pathname === '/api/convert') {
+			// 验证API密钥（使用与网页相同的密码）
+			if (env.PASSWORD && apiKey !== env.PASSWORD) {
+				return new Response('未授权访问', { status: 401 });
+			}
+
+			try {
+				const formData = await request.formData();
+				const file = formData.get('file');
+				
+				if (!file) {
+					return new Response('请上传文件', { status: 400 });
+				}
+
+				// 验证文件类型
+				const supportedMimeTypes = [
+					'application/pdf',
+					'image/jpeg',
+					'image/png',
+					'image/webp',
+					'image/svg+xml',
+					'text/html',
+					'application/xml',
+					'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+					'application/vnd.ms-excel.sheet.macroenabled.12',
+					'application/vnd.ms-excel.sheet.binary.macroenabled.12',
+					'application/vnd.ms-excel',
+					'application/vnd.oasis.opendocument.spreadsheet',
+					'text/csv',
+					'application/vnd.apple.numbers'
+				];
+
+				if (!supportedMimeTypes.includes(file.type)) {
+					return new Response(
+						`不支持的文件类型: ${file.name}。请上传 PDF、图片、HTML、XML、Office 文档、CSV 或 Numbers 文件。`, 
+						{ status: 400 }
+					);
+				}
+
+				console.log(`[${new Date().toISOString()}] API请求: 文件 ${file.name}, 大小: ${file.size} 字节, 类型: ${file.type}`);
+				
+				// 准备转换的文件
+				const fileList = [{
+					name: file.name,
+					blob: file
+				}];
+
+				// 转换文件
+				const results = await env.AI.toMarkdown(fileList);
+				
+				// 返回纯文本Markdown内容
+				return new Response(results[0].data, {
+					headers: { 'Content-Type': 'text/markdown; charset=utf-8' }
+				});
+			} catch (error) {
+				console.error(`[${new Date().toISOString()}] API转换过程中发生错误: ${error.message}`);
+				return new Response(`转换错误: ${error.message}`, { status: 500 });
+			}
+		}
+
+		// 处理网页文件转换请求
 		if (request.method === 'POST' && (url.pathname === '/convert' || url.pathname === '/cf')) {
 			// 验证登录状态，如果未设置密码则跳过验证
 			if (env.PASSWORD && (!authCookie || authCookie !== env.PASSWORD)) {
